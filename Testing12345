@@ -1,0 +1,263 @@
+using System;
+using System.Collections.Concurrent;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Consumer;
+using Azure.Messaging.EventHubs.Producer;
+using Moq;
+using Newtonsoft.Json.Linq;
+using Xunit;
+
+namespace Test.LoadTest
+{
+    public class JsonUpdaterTests
+    {
+        [Fact]
+        public async Task PublishAndConsumeJsonToEventHubTest()
+        {
+            // Arrange
+            var eventHubName = "test-hub";
+            var connectionString = "Endpoint=sb://test.servicebus.windows.net/;SharedAccessKeyName=test-key;SharedAccessKey=test-secret";
+            var eventDataQueue = new ConcurrentQueue<EventData>();
+
+            // Mock the EventHubProducerClient
+            var mockProducerClient = new Mock<EventHubProducerClient>(MockBehavior.Strict, connectionString, eventHubName);
+            mockProducerClient
+                .Setup(p => p.CreateBatchAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() =>
+                {
+                    var mockBatch = new Mock<EventDataBatch>(MockBehavior.Strict);
+                    mockBatch
+                        .Setup(b => b.TryAdd(It.IsAny<EventData>()))
+                        .Returns((EventData eventData) =>
+                        {
+                            eventDataQueue.Enqueue(eventData);
+                            return true;
+                        });
+                    mockBatch.Setup(b => b.Count).Returns(() => eventDataQueue.Count);
+                    return mockBatch.Object;
+                });
+            mockProducerClient
+                .Setup(p => p.SendAsync(It.IsAny<EventDataBatch>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+            // Mock the EventHubConsumerClient
+            var mockConsumerClient = new Mock<EventHubConsumerClient>(MockBehavior.Strict, EventHubConsumerClient.DefaultConsumerGroupName, connectionString, eventHubName);
+            mockConsumerClient
+                .Setup(c => c.ReadEventsAsync(It.IsAny<CancellationToken>()))
+                .Returns(() => GetPartitionEventsAsync(eventDataQueue));
+
+            // Act
+            var jsonObject = new JObject { ["key"] = "value" };
+            await JsonUpdater.PublishJsonToEventHubAsync(mockProducerClient.Object, jsonObject);
+
+            var receivedMessages = await JsonUpdater.ConsumeMessagesFromEventHubAsync(mockConsumerClient.Object);
+
+            // Assert
+            Assert.Single(receivedMessages);
+            Assert.Equal(jsonObject.ToString(), receivedMessages[0].ToString());
+        }
+
+        private async IAsyncEnumerable<PartitionEvent> GetPartitionEventsAsync(ConcurrentQueue<EventData> eventDataQueue)
+        {
+            while (!eventDataQueue.IsEmpty)
+            {
+                if (eventDataQueue.TryDequeue(out var eventData))
+                {
+                    yield return new PartitionEvent(new PartitionContext("0"), eventData);
+                }
+
+                await Task.Delay(100); // Simulate delay
+            }
+        }
+    }
+
+    public class JsonUpdater
+    {
+        public static JObject UpdateJsonFile(string filePath, string key1, string value1, string key2, string value2, string key3, string value3)
+        {
+            JObject jsonObject;
+
+            // Read the existing JSON file or create a new one
+            if (File.Exists(filePath))
+            {
+                string jsonContent = File.ReadAllText(filePath);
+                jsonObject = JObject.Parse(jsonContent);
+            }
+            else
+            {
+                jsonObject = new JObject();
+            }
+
+            // Update or add the specified keys with the new values
+            jsonObject[key1] = value1;
+            jsonObject[key2] = value2;
+            jsonObject[key3] = value3;
+
+            // Write the updated JSON back to the file
+            File.WriteAllText(filePath, jsonObject.ToString());
+
+            // Return the updated JObject
+            return jsonObject;
+        }
+
+        public static void UpdateJsonFileMultipleTimes(string filePath, string key1, string value1, string key2, string value2, string key3, string value3, int iterations)
+        {
+            for (int i = 0; i < iterations; i++)
+            {
+                UpdateJsonFile(filePath, key1, value1, key2, value2, key3, value3);
+            }
+
+            Console.WriteLine($"Updated JSON file {iterations} times.");
+        }
+
+        public static async Task PublishJsonToEventHubAsync(EventHubProducerClient producerClient, JObject jsonObject)
+        {
+            // Create a batch of events
+            using EventDataBatch eventBatch = await producerClient.CreateBatchAsync();
+
+            // Add an event to the batch. An event is a represented by a collection of bytes and metadata.
+            var eventData = new EventData(Encoding.UTF8.GetBytes(jsonObject.ToString()));
+            if (!eventBatch.TryAdd(eventData))
+            {
+                throw new Exception("The event is too large for the batch and cannot be sent.");
+            }
+
+            // Send the batch of events to the event hub
+            await producerClient.SendAsync(eventBatch);
+
+            Console.WriteLine("Published JSON to Event Hub.");
+        }
+
+        public static async Task<JObject[]> ConsumeMessagesFromEventHubAsync(EventHubConsumerClient consumerClient)
+        {
+            var messages = new ConcurrentBag<JObject>();
+
+            await foreach (PartitionEvent partitionEvent in consumerClient.ReadEventsAsync())
+            {
+                string messageBody = Encoding.UTF8.GetString(partitionEvent.Data.Body.ToArray());
+                Console.WriteLine($"Message received: {messageBody}");
+
+                // Process the message (for example, convert it back to a JObject if needed)
+                JObject jsonMessage = JObject.Parse(messageBody);
+                messages.Add(jsonMessage);
+            }
+
+            return messages.ToArray();
+        }
+    }
+}
+
+/////////
+
+Explanation
+Namespace Test.LoadTest: All classes and methods are placed under this namespace.
+Mocks and Tests: The JsonUpdaterTests class uses Moq to mock the Event Hub clients for testing the publishing and consuming of JSON messages.
+JsonUpdater Class: Includes methods to update a JSON file, publish JSON to an Event Hub, and consume messages from an Event Hub.
+Running the Tests
+Setup your testing environment:
+
+Ensure you have a suitable testing framework (e.g., xUnit) set up in your project.
+Ensure all necessary NuGet packages are installed.
+Run the tests:
+
+Use the Test Explorer in Visual Studio to run the tests.
+Verify that the tests pass and the expected output is produced.
+This approach allows you to simulate interactions with Azure Event Hubs using in-memory queues and mocks, enabling effective unit testing of your code.
+
+//////////////
+///csproj 
+////////
+
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+    <PackageReference Include="Azure.Messaging.EventHubs" Version="5.8.1" />
+    <PackageReference Include="Azure.Messaging.EventHubs.Producer" Version="5.8.1" />
+    <PackageReference Include="Azure.Messaging.EventHubs.Consumer" Version="5.8.1" />
+    <PackageReference Include="Moq" Version="4.18.2" />
+    <PackageReference Include="xunit" Version="2.4.1" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.3" />
+  </ItemGroup>
+
+</Project>
+/////
+
+
+
+/////
+Install-Package Moq
+Install-Package Xunit
+Install-Package Azure.Messaging.EventHubs
+
+
+/////
+
+To add your project to an existing solution (.sln) file, you need to create a new project and then add it to your solution. Below are the steps and the lines you need to add to your .sln file to include the new project.
+
+1. Create the Project
+First, create a new console application or class library project if you haven't already:
+
+sh
+Copy code::
+dotnet new console -n JsonUpdaterProject
+This command creates a new console application project named JsonUpdaterProject.
+
+2. Add the Project to Your Solution
+If you already have a solution file, you can add your new project to it. If you don't have a solution file yet, create one:
+
+sh
+Copy code::
+dotnet new sln -n MySolution
+dotnet sln add JsonUpdaterProject/JsonUpdaterProject.csproj
+
+3. Modify Your .sln File
+If you prefer to manually add the project to your solution file, open your .sln file and locate the Project section. You need to add an entry for your new project.
+
+Here is an example of what you need to add:
+
+plaintext::
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JsonUpdaterProject", "JsonUpdaterProject\JsonUpdaterProject.csproj", "{GUID-PROJECT-ID}"
+EndProject
+Replace {GUID-PROJECT-ID} with a new GUID for your project. You can generate a new GUID using Visual Studio or an online GUID generator.
+
+4. Example of a Full .sln File
+Below is an example of how the full .sln file might look after adding the JsonUpdaterProject.
+
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.28701.123
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JsonUpdaterProject", "JsonUpdaterProject\JsonUpdaterProject.csproj", "{D6B27F71-5EEC-4A29-9A82-9D1FC1301B35}"
+EndProject
+Global
+    GlobalSection(SolutionConfigurationPlatforms) = preSolution
+        Debug|Any CPU = Debug|Any CPU
+        Release|Any CPU = Release|Any CPU
+    EndGlobalSection
+    GlobalSection(ProjectConfigurationPlatforms) = postSolution
+        {D6B27F71-5EEC-4A29-9A82-9D1FC1301B35}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {D6B27F71-5EEC-4A29-9A82-9D1FC1301B35}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {D6B27F71-5EEC-4A29-9A82-9D1FC1301B35}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {D6B27F71-5EEC-4A29-9A82-9D1FC1301B35}.Release|Any CPU.Build.0 = Release|Any CPU
+    EndGlobalSection
+    GlobalSection(SolutionProperties) = preSolution
+        HideSolutionNode = FALSE
+    EndGlobalSection
+EndGlobal
+Summary
+Create your project using dotnet new console -n JsonUpdaterProject.
+Add your project to the solution using dotnet sln add JsonUpdaterProject/JsonUpdaterProject.csproj.
+Manually update your .sln file if necessary by adding the Project entry and corresponding GUID.
+Ensure the project configurations are correctly mapped in the GlobalSection(ProjectConfigurationPlatforms) section.
+By following these steps, your new project will be correctly included in your solution file, and you can proceed with adding your code and dependencies as needed.
+
