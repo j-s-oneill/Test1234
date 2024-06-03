@@ -1,0 +1,163 @@
+using System;
+using System.IO;
+using Newtonsoft.Json.Linq;
+
+public class JsonUpdater
+{
+    public static JObject UpdateJsonFile(string filePath, string key1, string value1, string key2, string value2, string key3, string value3)
+    {
+        JObject jsonObject;
+
+        // Read the existing JSON file or create a new one
+        if (File.Exists(filePath))
+        {
+            string jsonContent = File.ReadAllText(filePath);
+            jsonObject = JObject.Parse(jsonContent);
+        }
+        else
+        {
+            jsonObject = new JObject();
+        }
+
+        // Update or add the specified keys with the new values
+        jsonObject[key1] = value1;
+        jsonObject[key2] = value2;
+        jsonObject[key3] = value3;
+
+        // Write the updated JSON back to the file
+        File.WriteAllText(filePath, jsonObject.ToString());
+
+        // Return the updated JObject
+        return jsonObject;
+    }
+
+    public static void UpdateJsonFileMultipleTimes(string filePath, string key1, string value1, string key2, string value2, string key3, string value3, int iterations)
+    {
+        for (int i = 0; i < iterations; i++)
+        {
+            UpdateJsonFile(filePath, key1, value1, key2, value2, key3, value3);
+        }
+
+        Console.WriteLine($"Updated JSON file {iterations} times.");
+    }
+
+    public static void Main(string[] args)
+    {
+        // Example usage
+        string filePath = "path/to/your/jsonfile.json";
+        string key1 = "newKey1";
+        string value1 = "newValue1";
+        string key2 = "newKey2";
+        string value2 = "newValue2";
+        string key3 = "newKey3";
+        string value3 = "newValue3";
+
+        // Single update
+        JObject updatedJson = UpdateJsonFile(filePath, key1, value1, key2, value2, key3, value3);
+        Console.WriteLine(updatedJson.ToString());
+
+        // Multiple updates
+        UpdateJsonFileMultipleTimes(filePath, key1, value1, key2, value2, key3, value3, 1000);
+    }
+}
+
+//////
+
+using System;
+using System.IO;
+using Newtonsoft.Json.Linq;
+using Xunit;
+
+public class JsonUpdaterTests
+{
+    private const string TestFilePath = "test.json";
+
+    [Fact]
+    public void UpdateJsonFile_ShouldUpdateOrAddKeys()
+    {
+        // Arrange
+        string initialJson = @"{
+            'existingKey': 'existingValue'
+        }";
+        File.WriteAllText(TestFilePath, initialJson);
+
+        string key1 = "newKey1";
+        string value1 = "newValue1";
+        string key2 = "newKey2";
+        string value2 = "newValue2";
+        string key3 = "newKey3";
+        string value3 = "newValue3";
+
+        // Act
+        JObject updatedJson = JsonUpdater.UpdateJsonFile(TestFilePath, key1, value1, key2, value2, key3, value3);
+
+        // Assert
+        Assert.Equal(value1, updatedJson[key1].ToString());
+        Assert.Equal(value2, updatedJson[key2].ToString());
+        Assert.Equal(value3, updatedJson[key3].ToString());
+        Assert.Equal("existingValue", updatedJson["existingKey"].ToString());
+
+        // Cleanup
+        File.Delete(TestFilePath);
+    }
+
+    [Fact]
+    public void UpdateJsonFile_ShouldCreateFileIfNotExist()
+    {
+        // Arrange
+        if (File.Exists(TestFilePath))
+        {
+            File.Delete(TestFilePath);
+        }
+
+        string key1 = "newKey1";
+        string value1 = "newValue1";
+        string key2 = "newKey2";
+        string value2 = "newValue2";
+        string key3 = "newKey3";
+        string value3 = "newValue3";
+
+        // Act
+        JObject updatedJson = JsonUpdater.UpdateJsonFile(TestFilePath, key1, value1, key2, value2, key3, value3);
+
+        // Assert
+        Assert.Equal(value1, updatedJson[key1].ToString());
+        Assert.Equal(value2, updatedJson[key2].ToString());
+        Assert.Equal(value3, updatedJson[key3].ToString());
+        Assert.True(File.Exists(TestFilePath));
+
+        // Cleanup
+        File.Delete(TestFilePath);
+    }
+
+    [Fact]
+    public void UpdateJsonFileMultipleTimes_ShouldPerformUpdates()
+    {
+        // Arrange
+        string initialJson = @"{
+            'existingKey': 'existingValue'
+        }";
+        File.WriteAllText(TestFilePath, initialJson);
+
+        string key1 = "newKey1";
+        string value1 = "newValue1";
+        string key2 = "newKey2";
+        string value2 = "newValue2";
+        string key3 = "newKey3";
+        string value3 = "newValue3";
+
+        // Act
+        JsonUpdater.UpdateJsonFileMultipleTimes(TestFilePath, key1, value1, key2, value2, key3, value3, 1000);
+        JObject updatedJson = JObject.Parse(File.ReadAllText(TestFilePath));
+
+        // Assert
+        Assert.Equal(value1, updatedJson[key1].ToString());
+        Assert.Equal(value2, updatedJson[key2].ToString());
+        Assert.Equal(value3, updatedJson[key3].ToString());
+        Assert.Equal("existingValue", updatedJson["existingKey"].ToString());
+
+        // Cleanup
+        File.Delete(TestFilePath);
+    }
+}
+
