@@ -69,3 +69,20 @@ echo Solution and projects created successfully!
 
 endlocal
 pause
+
+
+Explanation
+Parameters: The script sets the solution name, main project name, test project name, and the target framework as parameters.
+Create Solution: Creates a new solution using dotnet new sln.
+Create Main Project: Creates a new console project and modifies the .csproj file to target the specified framework.
+Add Main Project to Solution: Adds the main project to the solution.
+Create Test Project: Creates a new NUnit test project and modifies the .csproj file to target the specified framework, also adding a reference to the main project.
+Add Necessary Packages: Adds the necessary NuGet packages for NUnit testing.
+Add Test Project to Solution: Adds the test project to the solution.
+Restore Packages: Restores the packages for the solution.
+How to Use
+Save the script as CreateProjects.bat.
+Open a Command Prompt.
+Navigate to the directory where you want to create your solution.
+Run the script: CreateProjects.bat.
+This script will create a new solution with the specified projects, configure them correctly, and add the necessary dependencies for testing with NUnit.
