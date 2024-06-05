@@ -1,0 +1,71 @@
+@echo off
+setlocal
+
+:: Parameters
+set solutionName=MySolution
+set mainProjectName=MyMainProject
+set testProjectName=MyMainProject.Tests
+set framework=net6.0
+
+:: Create solution
+dotnet new sln -n %solutionName%
+
+:: Create main project
+dotnet new console -n %mainProjectName%
+cd %mainProjectName%
+
+:: Modify the main project .csproj file to target the specified framework
+(for /f "delims=" %%i in (%mainProjectName%.csproj) do (
+    echo %%i | findstr /v "<TargetFramework>" >nul
+    if errorlevel 1 (
+        echo     <TargetFramework>%framework%</TargetFramework>
+    ) else (
+        echo %%i
+    )
+)) > temp.csproj
+move /Y temp.csproj %mainProjectName%.csproj
+
+:: Return to solution directory
+cd ..
+
+:: Add main project to solution
+dotnet sln %solutionName%.sln add %mainProjectName%\%mainProjectName%.csproj
+
+:: Create test project
+dotnet new nunit -n %testProjectName%
+cd %testProjectName%
+
+:: Modify the test project .csproj file to target the specified framework and add project reference
+(for /f "delims=" %%i in (%testProjectName%.csproj) do (
+    echo %%i | findstr /v "<TargetFramework>" >nul
+    if errorlevel 1 (
+        echo     <TargetFramework>%framework%</TargetFramework>
+    ) else (
+        echo %%i
+    )
+)) > temp.csproj
+(
+    echo   <ItemGroup>
+    echo     <ProjectReference Include="..\%mainProjectName%\%mainProjectName%.csproj" />
+    echo   </ItemGroup>
+) >> temp.csproj
+move /Y temp.csproj %testProjectName%.csproj
+
+:: Add necessary test packages
+dotnet add package NUnit
+dotnet add package NUnit3TestAdapter
+dotnet add package Microsoft.NET.Test.Sdk
+
+:: Return to solution directory
+cd ..
+
+:: Add test project to solution
+dotnet sln %solutionName%.sln add %testProjectName%\%testProjectName%.csproj
+
+:: Restore packages
+dotnet restore
+
+echo Solution and projects created successfully!
+
+endlocal
+pause
