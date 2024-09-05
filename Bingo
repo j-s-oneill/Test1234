@@ -1,8 +1,7 @@
-
-
-#####################################
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading;
 
 public class BusinessDayTimestampGenerator
 {
@@ -11,6 +10,9 @@ public class BusinessDayTimestampGenerator
     private static readonly Random RandomGenerator = new Random();
 
     private static DateTime currentDate;
+    private static readonly object dateLock = new object(); // Lock to manage date progression
+
+    private static Queue<DateTime> timestampQueue = new Queue<DateTime>();
 
     // Initialize the current date to 2 years ago
     static BusinessDayTimestampGenerator()
@@ -18,40 +20,50 @@ public class BusinessDayTimestampGenerator
         currentDate = DateTime.Today.AddYears(-2);
     }
 
-    // Method to generate a list of random timestamps starting from 2 years ago
-    public static List<DateTime>? GenerateSequentialBusinessDayTimestamps(int countPerDay)
+    // Method to generate timestamps for business days when the queue is empty
+    private static void GenerateTimestampsIfQueueIsEmpty(int countPerDay)
     {
-        List<DateTime> timestamps = new List<DateTime>();
-
-        // Check if we've reached the current date
-        if (currentDate > DateTime.Today)
+        lock (dateLock)
         {
-            return null; // No more dates left to generate timestamps
-        }
-
-        // Generate the specified number of timestamps for each business day
-        for (; currentDate <= DateTime.Today; currentDate = currentDate.AddDays(1))
-        {
-            if (IsBusinessDay(currentDate))
+            if (timestampQueue.Count == 0)
             {
-                // Generate the timestamps for the current business day
-                for (int i = 0; i < countPerDay; i++)
+                for (; currentDate <= DateTime.Today; currentDate = currentDate.AddDays(1))
                 {
-                    DateTime randomTime = GetRandomTimeOnDay(currentDate);
-                    timestamps.Add(randomTime);
+                    if (IsBusinessDay(currentDate))
+                    {
+                        // Generate 500 timestamps for the current business day
+                        for (int i = 0; i < countPerDay; i++)
+                        {
+                            DateTime randomTime = GetRandomTimeOnDay(currentDate);
+                            timestampQueue.Enqueue(randomTime);
+                        }
+
+                        currentDate = currentDate.AddDays(1); // Move to the next day after generating
+                        break; // Stop generating once we have 500 timestamps
+                    }
                 }
-                currentDate = currentDate.AddDays(1); // Move to the next date after generating for the current day
-                break; // Stop generating for this call, continue on the next call
             }
         }
+    }
 
-        return timestamps;
+    // Method to take a timestamp from the queue
+    public static DateTime? Take(int countPerDay)
+    {
+        GenerateTimestampsIfQueueIsEmpty(countPerDay);
+
+        if (timestampQueue.Count > 0)
+        {
+            return timestampQueue.Dequeue();
+        }
+        else
+        {
+            return null; // No more dates left to generate
+        }
     }
 
     // Method to get a random time between 9 AM and 5 PM on a given business day
     private static DateTime GetRandomTimeOnDay(DateTime day)
     {
-        // Get a random time between 9:00 AM and 5:00 PM
         int totalSecondsInRange = (int)(EndTime - StartTime).TotalSeconds;
         int randomSeconds = RandomGenerator.Next(totalSecondsInRange);
 
@@ -67,127 +79,121 @@ public class BusinessDayTimestampGenerator
 }
 
 
-Key Changes:
-Static currentDate field: I introduced a static field currentDate to keep track of the current day in the generation process. This field starts at 2 years ago (DateTime.Today.AddYears(-2)).
-Return null when out of range: If currentDate is beyond today's date, the method returns null, indicating that there are no more business days left to process.
-Generate timestamps day-by-day: In each call to GenerateSequentialBusinessDayTimestamps, the method generates timestamps for the next business day in the sequence. After generating, it updates currentDate to the next day.
-Usage Example:
-
-#########################
-class Program
-{
-    static void Main()
-    {
-        while (true)
-        {
-            var timestamps = BusinessDayTimestampGenerator.GenerateSequentialBusinessDayTimestamps(500);
-
-            if (timestamps == null)
-            {
-                Console.WriteLine("No more business days to generate.");
-                break;
-            }
-
-            // Output a sample of the timestamps
-            for (int i = 0; i < Math.Min(timestamps.Count, 5); i++)
-            {
-                Console.WriteLine(timestamps[i]);
-            }
-
-            Console.WriteLine("Generated for a new business day...");
-        }
-    }
-}
-Explanation:
-Sequential Calls: You can repeatedly call GenerateSequentialBusinessDayTimestamps(500) to generate timestamps day by day until the current date is reached.
-Null Check: When the generator runs out of valid dates (i.e., it reaches today's date), it will return null, and the loop will exit.
-This solution generates the specified number of timestamps for each business day starting from 2 years ago and stops when it reaches the current date. Let me know if you need further customization!
 
 
-Here is a simple test class for the BusinessDayTimestampGenerator. This class will help verify that the timestamp generation process works correctly, that timestamps are generated only on business days, and that it returns null when no more business days are available.
+###
 
-#####
 
+
+using NUnit.Framework;
 using System;
-using System.Collections.Generic;
 using System.Linq;
+using System.Collections.Generic;
 
-public class BusinessDayTimestampGeneratorTest
+[TestFixture]
+public class BusinessDayTimestampGeneratorTests
 {
-    public static void Main(string[] args)
+    [SetUp]
+    public void Setup()
     {
-        TestGenerate500TimestampsPerBusinessDay();
-        TestNoMoreDatesAfterCurrentDay();
-        TestTimestampsAreWithinBusinessHours();
+        // Reset state or prepare things before each test
     }
 
-    // Test to ensure that 500 timestamps are generated for each business day
-    public static void TestGenerate500TimestampsPerBusinessDay()
+    [Test]
+    public void TestTakeMethodGenerates500Timestamps()
     {
-        var timestamps = BusinessDayTimestampGenerator.GenerateSequentialBusinessDayTimestamps(500);
-
-        if (timestamps != null && timestamps.Count == 500)
+        // Act
+        var timestamps = new List<DateTime?>();
+        for (int i = 0; i < 500; i++)
         {
-            Console.WriteLine("TestGenerate500TimestampsPerBusinessDay passed.");
+            timestamps.Add(BusinessDayTimestampGenerator.Take(500));
         }
-        else
+
+        // Assert
+        Assert.AreEqual(500, timestamps.Count, "Expected 500 timestamps.");
+        Assert.IsTrue(timestamps.All(t => t.HasValue), "All timestamps should have values.");
+    }
+
+    [Test]
+    public void TestQueueIsRefilledAfter500Timestamps()
+    {
+        // Act
+        var firstSet = new List<DateTime?>();
+        for (int i = 0; i < 500; i++)
         {
-            Console.WriteLine("TestGenerate500TimestampsPerBusinessDay failed.");
+            firstSet.Add(BusinessDayTimestampGenerator.Take(500));
+        }
+
+        var secondSet = new List<DateTime?>();
+        for (int i = 0; i < 500; i++)
+        {
+            secondSet.Add(BusinessDayTimestampGenerator.Take(500));
+        }
+
+        // Assert
+        Assert.AreEqual(500, secondSet.Count, "Expected the queue to be refilled after the first 500 timestamps.");
+        Assert.IsTrue(secondSet.All(t => t.HasValue), "All second set timestamps should have values.");
+    }
+
+    [Test]
+    public void TestTimestampsAreOnBusinessDays()
+    {
+        // Act
+        var timestamps = new List<DateTime?>();
+        for (int i = 0; i < 500; i++)
+        {
+            timestamps.Add(BusinessDayTimestampGenerator.Take(500));
+        }
+
+        // Assert
+        foreach (var timestamp in timestamps)
+        {
+            Assert.IsNotNull(timestamp);
+            Assert.IsTrue(IsBusinessDay(timestamp.Value), $"Timestamp {timestamp.Value} is not a business day.");
         }
     }
 
-    // Test to ensure that no more timestamps are generated after reaching the current date
-    public static void TestNoMoreDatesAfterCurrentDay()
+    [Test]
+    public void TestTimestampsAreWithinBusinessHours()
     {
-        // Simulate calling the generator repeatedly until it returns null
-        while (true)
+        // Act
+        var timestamps = new List<DateTime?>();
+        for (int i = 0; i < 500; i++)
         {
-            var timestamps = BusinessDayTimestampGenerator.GenerateSequentialBusinessDayTimestamps(500);
-            
-            if (timestamps == null)
-            {
-                Console.WriteLine("TestNoMoreDatesAfterCurrentDay passed.");
-                break;
-            }
+            timestamps.Add(BusinessDayTimestampGenerator.Take(500));
+        }
+
+        // Assert
+        TimeSpan startTime = new TimeSpan(9, 0, 0);  // 9:00 AM
+        TimeSpan endTime = new TimeSpan(17, 0, 0);   // 5:00 PM
+
+        foreach (var timestamp in timestamps)
+        {
+            var timeOfDay = timestamp.Value.TimeOfDay;
+            Assert.IsTrue(timeOfDay >= startTime && timeOfDay <= endTime,
+                          $"Timestamp {timestamp.Value} is outside business hours.");
         }
     }
 
-    // Test to ensure that all generated timestamps are within the 9 AM - 5 PM window
-    public static void TestTimestampsAreWithinBusinessHours()
+    [Test]
+    public void TestReturnNullWhenAllDatesAreExhausted()
     {
-        var timestamps = BusinessDayTimestampGenerator.GenerateSequentialBusinessDayTimestamps(500);
-
-        bool areAllWithinBusinessHours = timestamps.All(timestamp =>
-            timestamp.TimeOfDay >= new TimeSpan(9, 0, 0) &&
-            timestamp.TimeOfDay <= new TimeSpan(17, 0, 0));
-
-        if (areAllWithinBusinessHours)
+        // Exhaust all dates by repeatedly calling Take
+        DateTime? timestamp;
+        do
         {
-            Console.WriteLine("TestTimestampsAreWithinBusinessHours passed.");
-        }
-        else
-        {
-            Console.WriteLine("TestTimestampsAreWithinBusinessHours failed.");
-        }
+            timestamp = BusinessDayTimestampGenerator.Take(500);
+        } while (timestamp != null);
+
+        // Act
+        var result = BusinessDayTimestampGenerator.Take(500);
+
+        // Assert
+        Assert.IsNull(result, "The generator should return null when all dates are exhausted.");
+    }
+
+    private bool IsBusinessDay(DateTime date)
+    {
+        return date.DayOfWeek != DayOfWeek.Saturday && date.DayOfWeek != DayOfWeek.Sunday;
     }
 }
-Explanation of Tests:
-
-TestGenerate500TimestampsPerBusinessDay:
-
-This test verifies that the generator produces exactly 500 timestamps for each business day.
-If the number of timestamps returned is 500, the test passes; otherwise, it fails.
-TestNoMoreDatesAfterCurrentDay:
-
-This test simulates repeatedly calling the generator until it reaches today's date.
-Once the generator returns null (indicating no more dates), the test checks whether it correctly identifies that no further dates are available.
-TestTimestampsAreWithinBusinessHours:
-
-This test ensures that all generated timestamps are within the business hours of 9 AM to 5 PM.
-It verifies that each timestamp's TimeOfDay is within the valid range and reports success if all timestamps are valid.
-Running the Tests:
-To run the tests, simply execute the BusinessDayTimestampGeneratorTest.Main() method. The test results will be printed to the console.
-
-
-
-
