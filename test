@@ -60,6 +60,12 @@ public class DataItemConverter
     }
 }
 
+  // Utility method to convert double (EPOCH seconds) to Timestamp
+    private static Timestamp ConvertDoubleToTimestamp(double epochSeconds)
+    {
+        return Timestamp.FromDateTimeOffset(DateTimeOffset.FromUnixTimeSeconds((long)epochSeconds));
+    }
+
 
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
