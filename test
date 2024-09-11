@@ -1,0 +1,137 @@
+using System;
+using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
+using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
+
+public class DataItemConverter
+{
+    // Converts DataItem to DataItemV2
+    public static DataItemV2 ConvertToDataItemV2(DataItem oldDataItem)
+    {
+        // Create new Header and copy fields from old header
+        var newHeader = new Header
+        {
+            Key = oldDataItem.Header.Key,
+            DataType = oldDataItem.Header.DataType,
+            Label = oldDataItem.Header.Label,
+            MetaData = ComputeMD5Checksum(oldDataItem.Header.MetaData),  // MD5 checksum for MetaData
+            ValidFrom = oldDataItem.Header.ValidFrom,
+            Expiry = oldDataItem.Header.Expiry,
+            Entitlements = { oldDataItem.Header.Entitlements }
+        };
+
+        // Create new DataItemV2
+        var newDataItemV2 = new DataItemV2
+        {
+            Id = oldDataItem.Id,
+            Header = newHeader,
+            Ts = Timestamp.FromDateTime(DateTime.UtcNow),
+            Payload = oldDataItem.Payload,
+            DbRevision = oldDataItem.DbRevision,
+            Duplicates = { oldDataItem.CorrelationIds }
+        };
+
+        // Convert parent IDs
+        foreach (var parentId in oldDataItem.ParentIds)
+        {
+            newDataItemV2.ParentIds.Add(new ParentId
+            {
+                Id = parentId,
+                DataType = oldDataItem.Header.DataType,
+                Label = oldDataItem.Header.Label,
+                Key = oldDataItem.Header.Key
+            });
+        }
+
+        return newDataItemV2;
+    }
+
+    // Utility method to compute MD5 checksum
+    private static string ComputeMD5Checksum(string input)
+    {
+        using (var md5 = MD5.Create())
+        {
+            byte[] inputBytes = Encoding.UTF8.GetBytes(input);
+            byte[] hashBytes = md5.ComputeHash(inputBytes);
+            return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+        }
+    }
+}
+
+
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System;
+using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
+using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
+
+namespace DataItemConversionTests
+{
+    [TestClass]
+    public class DataItemConverterTests
+    {
+        [TestMethod]
+        public void TestConvertToDataItemV2()
+        {
+            // Arrange - Create an old DataItem instance
+            var oldDataItem = new DataItem
+            {
+                Header = new Header
+                {
+                    Key = "123",
+                    DataType = "Spot",
+                    Label = "RealTime",
+                    MetaData = "SampleMetaData",
+                    ValidFrom = 1609459200, // EPOCH time example
+                    Expiry = 1672444800, // EPOCH time example
+                    Entitlements = { "entitlement1", "entitlement2" }
+                },
+                Id = "abc123",
+                Payload = new Payload
+                {
+                    Json = new Struct() // Using empty Struct as a placeholder for simplicity
+                },
+                ParentIds = { "parentId1", "parentId2" },
+                DbRevision = 1.0,
+                CorrelationIds = { "corrId1", "corrId2" }
+            };
+
+            // Act - Call the method to convert to DataItemV2
+            var newDataItemV2 = DataItemConverter.ConvertToDataItemV2(oldDataItem);
+
+            // Assert - Verify that the fields are correctly converted
+            Assert.AreEqual("123", newDataItemV2.Header.Key);
+            Assert.AreEqual("Spot", newDataItemV2.Header.DataType);
+            Assert.AreEqual("RealTime", newDataItemV2.Header.Label);
+
+            // Verify MD5 checksum of metadata
+            string expectedMd5 = ComputeMD5Checksum("SampleMetaData");
+            Assert.AreEqual(expectedMd5, newDataItemV2.Header.MetaData);
+
+            // Verify other fields
+            Assert.AreEqual("abc123", newDataItemV2.Id);
+            Assert.AreEqual(2, newDataItemV2.ParentIds.Count);
+            Assert.AreEqual(2, newDataItemV2.Duplicates.Count);
+            Assert.AreEqual("parentId1", newDataItemV2.ParentIds[0].Id);
+            Assert.AreEqual("corrId1", newDataItemV2.Duplicates[0]);
+
+            // Verify the timestamp is set
+            Assert.IsTrue(newDataItemV2.Ts.Seconds > 0);
+        }
+
+        // Utility method to compute MD5 checksum (same as in the converter)
+        private string ComputeMD5Checksum(string input)
+        {
+            using (var md5 = MD5.Create())
+            {
+                byte[] inputBytes = Encoding.UTF8.GetBytes(input);
+                byte[] hashBytes = md5.ComputeHash(inputBytes);
+                return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+            }
+        }
+    }
+}
